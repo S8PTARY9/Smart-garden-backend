@@ -6,7 +6,13 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List
-from datetime import datetime
+from datetime import datetime, timedelta
+
+# ================= KONFIGURASI MQTT =================
+# Pastikan nama topic ini sama persis dengan di Arduino IDE
+MQTT_BROKER = "broker.hivemq.com"
+MQTT_PORT = 1883
+MQTT_TOPIC = "titan_flowman/pola_jalur" 
 
 # ================= KONFIGURASI DATABASE =================
 def get_db_connection():
@@ -53,22 +59,29 @@ async def save_path(request: PlowingRequest):
     
     try:
         cursor = db.cursor()
-        # Sesuai tabel Anda: id, path_data, total_distance, created_at
+        # Simpan ke MySQL
         sql = "INSERT INTO plowing_history (path_data, total_distance) VALUES (%s, %s)"
         val = (json.dumps(request.path), request.total_distance)
-        
         cursor.execute(sql, val)
         
-        # Kirim MQTT ke Alat
+        # --- MODIFIKASI MQTT ---
+        # Kirim data ke Alat melalui Broker MQTT
         try:
-            client = mqtt.Client()
-            client.connect("broker.hivemq.com", 1883, 60)
-            client.publish("smart_plowing/command", json.dumps({"path": request.path}))
-            client.disconnect()
-        except:
-            pass
+            mqtt_client = mqtt.Client()
+            mqtt_client.connect(MQTT_BROKER, MQTT_PORT, 60)
+            
+            # Payload yang dikirim berisi list koordinat
+            payload = json.dumps({"path": request.path})
+            
+            mqtt_client.publish(MQTT_TOPIC, payload)
+            mqtt_client.disconnect()
+            print(f"Berhasil Publish MQTT ke {MQTT_TOPIC}")
+        except Exception as mqtt_err:
+            print(f"Gagal MQTT: {mqtt_err}")
+            # Kita tidak raise error di sini agar data tetap tersimpan di DB 
+            # meskipun broker MQTT sedang bermasalah
 
-        return {"status": "success", "message": "Pola tersimpan"}
+        return {"status": "success", "message": "Pola tersimpan & dikirim ke alat"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     finally:
@@ -93,8 +106,6 @@ async def get_history():
         db.close()
 
 # 3. Ambil Sensor (Tabel: sensor_logs)
-from datetime import datetime, timedelta
-
 @app.get("/api/soil-data/latest")
 async def get_sensor():
     db = get_db_connection()
@@ -103,14 +114,12 @@ async def get_sensor():
     
     try:
         cursor = db.cursor(dictionary=True)
-        # Mengambil data terbaru berdasarkan ID terbesar
         cursor.execute("SELECT moisture, created_at FROM sensor_logs ORDER BY id DESC LIMIT 1")
         row = cursor.fetchone()
         
         if row:
             m = float(row['moisture'])
             
-            # --- LOGIKA OTOMATISASI STATUS ---
             if m < 35:
                 status_text = "Tanah Kering"
             elif 35 <= m <= 75:
@@ -118,15 +127,11 @@ async def get_sensor():
             else:
                 status_text = "Tanah Basah"
             
-            # --- PERBAIKAN JAM UPDATE (KONVERSI KE WIB) ---
             waktu_data = row['created_at']
-            
             if waktu_data:
-                # Menambah 7 jam untuk mengonversi UTC (Railway) ke WIB
                 waktu_wib = waktu_data + timedelta(hours=7)
                 jam_update = waktu_wib.strftime("%H:%M:%S")
             else:
-                # Jika created_at kosong, gunakan waktu server saat ini + 7 jam
                 jam_update = (datetime.utcnow() + timedelta(hours=7)).strftime("%H:%M:%S")
             
             return {
@@ -138,7 +143,6 @@ async def get_sensor():
         return {"moisture": 0, "status": "Data Kosong", "timestamp": "-"}
     except Exception as e:
         print(f"Error Sensor: {e}")
-        # Jika error, kirim waktu saat ini (WIB) sebagai fallback
         waktu_now = (datetime.utcnow() + timedelta(hours=7)).strftime("%H:%M:%S")
         return {"moisture": 0, "status": "Error", "timestamp": waktu_now}
     finally:
