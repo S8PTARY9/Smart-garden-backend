@@ -96,19 +96,40 @@ async def get_history():
 @app.get("/api/soil-data/latest")
 async def get_sensor():
     db = get_db_connection()
-    if not db: return {"moisture": 0, "status": "Offline"}
+    if not db: 
+        return {"moisture": 0, "status": "Offline", "timestamp": "N/A"}
+    
     try:
         cursor = db.cursor(dictionary=True)
-        # Sesuai tabel Anda: id, moisture, status, created_at
-        cursor.execute("SELECT moisture, status, created_at FROM sensor_logs ORDER BY id DESC LIMIT 1")
+        # Mengambil data terbaru berdasarkan ID terbesar
+        cursor.execute("SELECT moisture, created_at FROM sensor_logs ORDER BY id DESC LIMIT 1")
         row = cursor.fetchone()
         
         if row:
+            m = float(row['moisture'])
+            
+            # --- LOGIKA OTOMATISASI STATUS ---
+            if m < 35:
+                status_text = "Tanah Kering"
+            elif 35 <= m <= 75:
+                status_text = "Kondisi Optimal"
+            else:
+                status_text = "Tanah Basah"
+            
+            # --- PENANGANAN JAM UPDATE (WIB) ---
+            # Jika jam di Railway berbeda, kita pastikan formatnya jam:menit:detik
+            waktu_data = row['created_at']
+            jam_update = waktu_data.strftime("%H:%M:%S") if waktu_data else datetime.now().strftime("%H:%M:%S")
+            
             return {
-                "moisture": row['moisture'],
-                "status": row['status'],
-                "timestamp": row['created_at'].strftime("%H:%M:%S") if row['created_at'] else "-"
+                "moisture": m,
+                "status": status_text,  # Status ini otomatis, tidak perlu ketik manual lagi
+                "timestamp": jam_update
             }
-        return {"moisture": 0, "status": "No Data", "timestamp": "-"}
+            
+        return {"moisture": 0, "status": "Data Kosong", "timestamp": "-"}
+    except Exception as e:
+        print(f"Error Sensor: {e}")
+        return {"moisture": 0, "status": "Error", "timestamp": "N/A"}
     finally:
         db.close()
