@@ -93,6 +93,8 @@ async def get_history():
         db.close()
 
 # 3. Ambil Sensor (Tabel: sensor_logs)
+from datetime import datetime, timedelta
+
 @app.get("/api/soil-data/latest")
 async def get_sensor():
     db = get_db_connection()
@@ -116,20 +118,28 @@ async def get_sensor():
             else:
                 status_text = "Tanah Basah"
             
-            # --- PENANGANAN JAM UPDATE (WIB) ---
-            # Jika jam di Railway berbeda, kita pastikan formatnya jam:menit:detik
+            # --- PERBAIKAN JAM UPDATE (KONVERSI KE WIB) ---
             waktu_data = row['created_at']
-            jam_update = waktu_data.strftime("%H:%M:%S") if waktu_data else datetime.now().strftime("%H:%M:%S")
+            
+            if waktu_data:
+                # Menambah 7 jam untuk mengonversi UTC (Railway) ke WIB
+                waktu_wib = waktu_data + timedelta(hours=7)
+                jam_update = waktu_wib.strftime("%H:%M:%S")
+            else:
+                # Jika created_at kosong, gunakan waktu server saat ini + 7 jam
+                jam_update = (datetime.utcnow() + timedelta(hours=7)).strftime("%H:%M:%S")
             
             return {
                 "moisture": m,
-                "status": status_text,  # Status ini otomatis, tidak perlu ketik manual lagi
+                "status": status_text,
                 "timestamp": jam_update
             }
             
         return {"moisture": 0, "status": "Data Kosong", "timestamp": "-"}
     except Exception as e:
         print(f"Error Sensor: {e}")
-        return {"moisture": 0, "status": "Error", "timestamp": "N/A"}
+        # Jika error, kirim waktu saat ini (WIB) sebagai fallback
+        waktu_now = (datetime.utcnow() + timedelta(hours=7)).strftime("%H:%M:%S")
+        return {"moisture": 0, "status": "Error", "timestamp": waktu_now}
     finally:
         db.close()
