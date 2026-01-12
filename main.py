@@ -9,10 +9,9 @@ from typing import List
 from datetime import datetime, timedelta
 
 # ================= KONFIGURASI MQTT =================
-# Pastikan nama topic ini sama persis dengan di Arduino IDE
 MQTT_BROKER = "broker.hivemq.com"
 MQTT_PORT = 1883
-MQTT_TOPIC = "titan_flowman/pola_jalur" 
+MQTT_TOPIC = "titan_flowman/pola_jalur"
 
 # ================= KONFIGURASI DATABASE =================
 def get_db_connection():
@@ -50,7 +49,7 @@ class PlowingRequest(BaseModel):
 async def root():
     return {"status": "online", "message": "Backend Smart Rice Flowman Aktif"}
 
-# 1. Kirim & Simpan Pola (Tabel: plowing_history)
+# 1. Kirim & Simpan Pola
 @app.post("/api/plow-path")
 async def save_path(request: PlowingRequest):
     db = get_db_connection()
@@ -64,30 +63,31 @@ async def save_path(request: PlowingRequest):
         val = (json.dumps(request.path), request.total_distance)
         cursor.execute(sql, val)
         
-        # --- MODIFIKASI MQTT ---
-        # Kirim data ke Alat melalui Broker MQTT
+        # --- LOGIKA MQTT FINAL ---
         try:
-            mqtt_client = mqtt.Client()
-            mqtt_client.connect(MQTT_BROKER, MQTT_PORT, 60)
+            # Menggunakan CallbackAPIVersion untuk kompatibilitas paho-mqtt 2.0+
+            client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION1) 
+            client.connect(MQTT_BROKER, MQTT_PORT, 60)
             
-            # Payload yang dikirim berisi list koordinat
             payload = json.dumps({"path": request.path})
             
-            mqtt_client.publish(MQTT_TOPIC, payload)
-            mqtt_client.disconnect()
-            print(f"Berhasil Publish MQTT ke {MQTT_TOPIC}")
+            # Menggunakan QoS 1 agar pesan dijamin sampai ke Broker
+            result = client.publish(MQTT_TOPIC, payload, qos=1)
+            
+            # Memastikan pesan terkirim sebelum disconnect
+            result.wait_for_publish() 
+            client.disconnect()
+            print(f"Berhasil Publish ke {MQTT_TOPIC} dengan QoS 1")
         except Exception as mqtt_err:
             print(f"Gagal MQTT: {mqtt_err}")
-            # Kita tidak raise error di sini agar data tetap tersimpan di DB 
-            # meskipun broker MQTT sedang bermasalah
 
-        return {"status": "success", "message": "Pola tersimpan & dikirim ke alat"}
+        return {"status": "success", "message": "Pola tersimpan & terkirim ke MQTT"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     finally:
         db.close()
 
-# 2. Ambil Riwayat (Tabel: plowing_history)
+# 2. Ambil Riwayat
 @app.get("/api/plowing-history")
 async def get_history():
     db = get_db_connection()
@@ -105,7 +105,7 @@ async def get_history():
     finally:
         db.close()
 
-# 3. Ambil Sensor (Tabel: sensor_logs)
+# 3. Ambil Sensor (Otomatis WIB)
 @app.get("/api/soil-data/latest")
 async def get_sensor():
     db = get_db_connection()
@@ -120,6 +120,7 @@ async def get_sensor():
         if row:
             m = float(row['moisture'])
             
+            # Logika Status Otomatis
             if m < 35:
                 status_text = "Tanah Kering"
             elif 35 <= m <= 75:
@@ -129,6 +130,7 @@ async def get_sensor():
             
             waktu_data = row['created_at']
             if waktu_data:
+                # Konversi UTC ke WIB (+7 Jam)
                 waktu_wib = waktu_data + timedelta(hours=7)
                 jam_update = waktu_wib.strftime("%H:%M:%S")
             else:
