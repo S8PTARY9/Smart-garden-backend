@@ -6,9 +6,9 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List
+from datetime import datetime
 
-# ========== CONFIGURASI DATABASE ==========
-# Railway menyediakan variabel environment secara otomatis
+# ========== CONFIGURASI DATABASE RAILWAY ==========
 def get_db_connection():
     try:
         conn = mysql.connector.connect(
@@ -16,7 +16,7 @@ def get_db_connection():
             user=os.getenv('MYSQLUSER'),
             password=os.getenv('MYSQLPASSWORD'),
             database=os.getenv('MYSQLDATABASE'),
-            port=os.getenv('MYSQLPORT')
+            port=int(os.getenv('MYSQLPORT', 3306))
         )
         return conn
     except mysql.connector.Error as err:
@@ -26,7 +26,6 @@ def get_db_connection():
 # ========== FASTAPI SETUP ==========
 app = FastAPI(title="Smart Rice Flowman API")
 
-# Agar Flutter Web/Android bisa mengakses API ini
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -37,102 +36,98 @@ app.add_middleware(
 # ========== MQTT SETUP ==========
 MQTT_BROKER = "broker.hivemq.com"
 MQTT_TOPIC_COMMAND = "smart_plowing/command"
-MQTT_TOPIC_SENSOR = "smart_plowing/sensor"
 
-mqtt_client = mqtt.Client()
-
-def on_connect(client, userdata, flags, rc):
-    print(f"Connected to MQTT Broker with result code {rc}")
-    client.subscribe(MQTT_TOPIC_SENSOR)
-
-def on_message(client, userdata, msg):
+def send_mqtt_command(data):
     try:
-        # Menerima data dari Wemos: {"moisture": 75.5}
-        data = json.loads(msg.payload.decode())
-        moisture = data.get('moisture')
-        
-        if moisture is not None:
-            status = "Lembab" if moisture < 80 else "Kering"
-            
-            # Simpan ke MySQL Railway
-            conn = get_db_connection()
-            if conn:
-                cursor = conn.cursor()
-                query = "INSERT INTO sensor_logs (moisture, status) VALUES (%s, %s)"
-                cursor.execute(query, (moisture, status))
-                conn.commit()
-                cursor.close()
-                conn.close()
-                print(f"Data sensor berhasil disimpan: {moisture}%")
-    except Exception as e:
-        print(f"Gagal memproses pesan MQTT: {e}")
+        client = mqtt.Client()
+        client.connect(MQTT_BROKER, 1883, 60)
+        client.publish(MQTT_TOPIC_COMMAND, json.dumps(data))
+        client.disconnect()
+        return True
+    except:
+        return False
 
-mqtt_client.on_connect = on_connect
-mqtt_client.on_message = on_message
-mqtt_client.connect(MQTT_BROKER, 1883, 60)
-mqtt_client.loop_start()
-
-# ========== SCHEMAS (Model Data) ==========
-class Point(BaseModel):
-    x: int
-    y: int
-
-class PathRequest(BaseModel):
-    path: List[Point]
+# Schema untuk Request dari Flutter
+class PlowingRequest(BaseModel):
+    path: List[dict]
+    device_id: str
+    moisture_at_start: float
     total_distance: float
 
-# ========== ENDPOINTS API ==========
+# ========== ENDPOINTS ==========
 
-@app.get("/")
-def home():
-    return {"status": "online", "message": "Backend Smart Rice Flowman Siap!"}
-
-# Endpoint untuk Flutter mengirim pola
+# 1. Simpan Pola & Kirim ke MQTT
 @app.post("/api/plow-path")
-async def receive_path(request: PathRequest):
-    # 1. Konversi list objek menjadi list dict/json
-    path_data = [p.dict() for p in request.path]
-    
-    # 2. Kirim koordinat ke Wemos via MQTT
-    mqtt_client.publish(MQTT_TOPIC_COMMAND, json.dumps(path_data))
-    
-    # 3. Simpan ke MySQL Railway
+async def receive_path(request: PlowingRequest):
     conn = get_db_connection()
     if not conn:
-        raise HTTPException(status_code=500, detail="Database tidak terkoneksi")
+        raise HTTPException(status_code=500, detail="Database tidak terhubung")
     
     try:
         cursor = conn.cursor()
-        query = "INSERT INTO plowing_history (path_data, total_distance) VALUES (%s, %s)"
-        # path_data diubah ke string JSON agar sesuai tipe kolom json di MySQL
-        cursor.execute(query, (json.dumps(path_data), request.total_distance))
+        # Simpan ke tabel plowing_history
+        query = """INSERT INTO plowing_history 
+                   (path_data, total_distance, moisture_at_start) 
+                   VALUES (%s, %s, %s)"""
+        
+        path_json = json.dumps(request.path)
+        cursor.execute(query, (path_json, request.total_distance, request.moisture_at_start))
         conn.commit()
-        cursor.close()
-        conn.close()
-        return {"message": "Pola berhasil dikirim ke alat dan disimpan ke riwayat"}
+        
+        # Kirim perintah pergerakan ke IoT via MQTT
+        mqtt_payload = {
+            "action": "START_PLOWING",
+            "device_id": request.device_id,
+            "path": request.path
+        }
+        send_mqtt_command(mqtt_payload)
+
+        return {"status": "success", "message": "Pola disimpan dan perintah dikirim!"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        cursor.close()
+        conn.close()
 
-# Endpoint untuk Flutter mengambil riwayat pembajakan
+# 2. Ambil Riwayat untuk Daftar di Flutter
 @app.get("/api/plowing-history")
-def get_history():
+async def get_history():
     conn = get_db_connection()
     if not conn: return []
-    cursor = conn.cursor(dictionary=True)
-    cursor.execute("SELECT * FROM plowing_history ORDER BY created_at DESC LIMIT 10")
-    result = cursor.fetchall()
-    cursor.close()
-    conn.close()
-    return result
+    try:
+        cursor = conn.cursor(dictionary=True)
+        cursor.execute("SELECT * FROM plowing_history ORDER BY created_at DESC LIMIT 15")
+        result = cursor.fetchall()
+        
+        for item in result:
+            if isinstance(item['path_data'], str):
+                item['path_data'] = json.loads(item['path_data'])
+            item['created_at'] = item['created_at'].isoformat()
+        return result
+    except:
+        return []
+    finally:
+        cursor.close()
+        conn.close()
 
-# Endpoint untuk Flutter mengambil data sensor terbaru
+# 3. Ambil Data Sensor Terbaru dari sensor_logs
 @app.get("/api/soil-data/latest")
-def get_latest_sensor():
+async def get_latest_sensor():
     conn = get_db_connection()
-    if not conn: return {"moisture": 0, "status": "Error DB"}
-    cursor = conn.cursor(dictionary=True)
-    cursor.execute("SELECT * FROM sensor_logs ORDER BY created_at DESC LIMIT 1")
-    result = cursor.fetchone()
-    cursor.close()
-    conn.close()
-    return result if result else {"moisture": 0, "status": "Belum ada data"}
+    if not conn: return {"moisture": 0, "status": "Offline"}
+    try:
+        cursor = conn.cursor(dictionary=True)
+        # Mengambil log terakhir dari tabel sensor_logs
+        cursor.execute("SELECT moisture, timestamp FROM sensor_logs ORDER BY timestamp DESC LIMIT 1")
+        row = cursor.fetchone()
+        
+        if row:
+            return {
+                "moisture": row['moisture'],
+                "timestamp": row['timestamp'].strftime("%H:%M:%S"),
+                "status": "Online"
+            }
+        return {"moisture": 0, "status": "No Data"}
+    finally:
+        cursor.close()
+        conn.close()
