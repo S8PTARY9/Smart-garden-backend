@@ -13,7 +13,22 @@ MQTT_BROKER = "broker.hivemq.com"
 MQTT_PORT = 1883
 MQTT_TOPIC = "titan_flowman/pola_jalur"
 
-# ================= KONFIGURASI DATABASE =================
+app = FastAPI()
+
+# Middleware CORS (Tetap sama)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Model data dari Flutter (Tetap sama)
+class PlowingRequest(BaseModel):
+    path: List[dict]
+    total_distance: float
+
+# ================= KONEKSI DATABASE =================
 def get_db_connection():
     try:
         conn = mysql.connector.connect(
@@ -29,27 +44,13 @@ def get_db_connection():
         print(f"Koneksi DB Gagal: {e}")
         return None
 
-app = FastAPI()
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# Model data dari Flutter
-class PlowingRequest(BaseModel):
-    path: List[dict]
-    total_distance: float
-
 # ================= ENDPOINTS =================
 
 @app.get("/")
 async def root():
     return {"status": "online", "message": "Backend Smart Rice Flowman Aktif"}
 
-# 1. Kirim & Simpan Pola
+# 1. KIRIM & SIMPAN POLA (DIPERBAIKI STABILITASNYA)
 @app.post("/api/plow-path")
 async def save_path(request: PlowingRequest):
     db = get_db_connection()
@@ -58,36 +59,38 @@ async def save_path(request: PlowingRequest):
     
     try:
         cursor = db.cursor()
-        # Simpan ke MySQL
+        # A. SIMPAN KE MYSQL (Tetap sesuai fungsi lama Anda)
         sql = "INSERT INTO plowing_history (path_data, total_distance) VALUES (%s, %s)"
         val = (json.dumps(request.path), request.total_distance)
         cursor.execute(sql, val)
         
-        # --- LOGIKA MQTT FINAL ---
+        # B. KIRIM KE MQTT (DIPERBAIKI AGAR TIDAK DISCONNECT)
         try:
-            # Menggunakan CallbackAPIVersion untuk kompatibilitas paho-mqtt 2.0+
-            client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION1) 
-            client.connect(MQTT_BROKER, MQTT_PORT, 60)
+            # Menggunakan API Version 1 untuk stabilitas library di Railway
+            mqtt_client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION1)
+            mqtt_client.connect(MQTT_BROKER, MQTT_PORT, 60)
             
             payload = json.dumps({"path": request.path})
             
-            # Menggunakan QoS 1 agar pesan dijamin sampai ke Broker
-            result = client.publish(MQTT_TOPIC, payload, qos=1)
+            # Publish dengan QoS 1
+            result = mqtt_client.publish(MQTT_TOPIC, payload, qos=1)
             
-            # Memastikan pesan terkirim sebelum disconnect
-            result.wait_for_publish() 
-            client.disconnect()
-            print(f"Berhasil Publish ke {MQTT_TOPIC} dengan QoS 1")
+            # MENUNGGU PROSES PUBLISH SELESAI (PENTING!)
+            # Ini mencegah backend disconnect karena mematikan koneksi terlalu cepat
+            result.wait_for_publish(timeout=2.0)
+            
+            mqtt_client.disconnect()
+            print(f"MQTT Berhasil: {MQTT_TOPIC}")
         except Exception as mqtt_err:
-            print(f"Gagal MQTT: {mqtt_err}")
+            print(f"Logika MQTT bermasalah tapi DB aman: {mqtt_err}")
 
-        return {"status": "success", "message": "Pola tersimpan & terkirim ke MQTT"}
+        return {"status": "success", "message": "Pola tersimpan & dikirim"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     finally:
         db.close()
 
-# 2. Ambil Riwayat
+# 2. AMBIL RIWAYAT (Fungsi Lama Tetap Sama)
 @app.get("/api/plowing-history")
 async def get_history():
     db = get_db_connection()
@@ -105,7 +108,7 @@ async def get_history():
     finally:
         db.close()
 
-# 3. Ambil Sensor (Otomatis WIB)
+# 3. AMBIL SENSOR TERBARU (Fungsi Lama Tetap Sama dengan perbaikan jam WIB)
 @app.get("/api/soil-data/latest")
 async def get_sensor():
     db = get_db_connection()
@@ -121,16 +124,13 @@ async def get_sensor():
             m = float(row['moisture'])
             
             # Logika Status Otomatis
-            if m < 35:
-                status_text = "Tanah Kering"
-            elif 35 <= m <= 75:
-                status_text = "Kondisi Optimal"
-            else:
-                status_text = "Tanah Basah"
+            if m < 35: status_text = "Tanah Kering"
+            elif 35 <= m <= 75: status_text = "Kondisi Optimal"
+            else: status_text = "Tanah Basah"
             
+            # Jam Update WIB
             waktu_data = row['created_at']
             if waktu_data:
-                # Konversi UTC ke WIB (+7 Jam)
                 waktu_wib = waktu_data + timedelta(hours=7)
                 jam_update = waktu_wib.strftime("%H:%M:%S")
             else:
@@ -141,11 +141,6 @@ async def get_sensor():
                 "status": status_text,
                 "timestamp": jam_update
             }
-            
         return {"moisture": 0, "status": "Data Kosong", "timestamp": "-"}
-    except Exception as e:
-        print(f"Error Sensor: {e}")
-        waktu_now = (datetime.utcnow() + timedelta(hours=7)).strftime("%H:%M:%S")
-        return {"moisture": 0, "status": "Error", "timestamp": waktu_now}
     finally:
         db.close()
