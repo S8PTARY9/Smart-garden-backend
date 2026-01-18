@@ -27,6 +27,10 @@ app.add_middleware(
 class PlowingRequest(BaseModel):
     path: List[dict]
     total_distance: float
+    
+class SensorEntry(BaseModel):  # <--- PASTIKAN INI ADA
+    moisture: float
+    status: str
 
 # ================= KONEKSI DATABASE =================
 def get_db_connection():
@@ -142,5 +146,26 @@ async def get_sensor():
                 "timestamp": jam_update
             }
         return {"moisture": 0, "status": "Data Kosong", "timestamp": "-"}
+    finally:
+        db.close()
+        
+# ==========================================================
+# 1. ENDPOINT UNTUK ARDUINO (MENERIMA DATA)
+# ==========================================================
+@app.post("/api/soil-data/record")
+async def record_sensor(data: SensorEntry):
+    db = get_db_connection()
+    if not db:
+        raise HTTPException(status_code=500, detail="Database Offline")
+    try:
+        cursor = db.cursor()
+        # Menyimpan data asli dari sensor ke tabel sensor_logs
+        sql = "INSERT INTO sensor_logs (moisture, status, created_at) VALUES (%s, %s, NOW())"
+        val = (data.moisture, data.status)
+        cursor.execute(sql, val)
+        return {"status": "success", "message": "Data Berhasil Dicatat"}
+    except Exception as e:
+        print(f"Gagal simpan sensor: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
     finally:
         db.close()
