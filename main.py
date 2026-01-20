@@ -111,6 +111,71 @@ async def get_history():
         return rows
     finally:
         db.close()
+        
+# 3. HAPUS RIWAYAT BERDASARKAN ID
+@app.delete("/api/plowing-history/{history_id}")
+async def delete_history(history_id: int):
+    db = get_db_connection()
+    if not db:
+        raise HTTPException(status_code=500, detail="Database Offline")
+    
+    try:
+        cursor = db.cursor()
+        
+        # Cek apakah data dengan ID tersebut ada
+        cursor.execute("SELECT id FROM plowing_history WHERE id = %s", (history_id,))
+        result = cursor.fetchone()
+        
+        if not result:
+            raise HTTPException(status_code=404, detail="Riwayat tidak ditemukan")
+        
+        # Hapus data
+        cursor.execute("DELETE FROM plowing_history WHERE id = %s", (history_id,))
+        
+        return {
+            "status": "success", 
+            "message": f"Riwayat ID {history_id} berhasil dihapus"
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error saat menghapus riwayat: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        db.close()
+
+# 4. HAPUS SEMUA RIWAYAT
+@app.delete("/api/plowing-history/all")
+async def delete_all_history():
+    db = get_db_connection()
+    if not db:
+        raise HTTPException(status_code=500, detail="Database Offline")
+    
+    try:
+        cursor = db.cursor()
+        
+        # Hitung jumlah data yang akan dihapus
+        cursor.execute("SELECT COUNT(*) FROM plowing_history")
+        count = cursor.fetchone()[0]
+        
+        if count == 0:
+            return {
+                "status": "success",
+                "message": "Tidak ada riwayat untuk dihapus"
+            }
+        
+        # Hapus semua data
+        cursor.execute("DELETE FROM plowing_history")
+        
+        return {
+            "status": "success",
+            "message": f"Berhasil menghapus {count} riwayat pembajakan"
+        }
+    except Exception as e:
+        print(f"Error saat menghapus semua riwayat: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        db.close()
 
 # 3. AMBIL SENSOR TERBARU (Fungsi Lama Tetap Sama dengan perbaikan jam WIB)
 @app.get("/api/soil-data/latest")
