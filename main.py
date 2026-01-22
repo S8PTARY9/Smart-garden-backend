@@ -145,49 +145,49 @@ async def delete_history(history_id: int):
         db.close()
 
 # 4. HAPUS SEMUA RIWAYAT (Versi Super Kuat)
+import requests
+from fastapi import FastAPI, HTTPException
+
+app = FastAPI()
+
 @app.delete("/api/plowing-history/all")
 async def delete_all_history():
-    db = get_db_connection()
-    if not db:
-        raise HTTPException(status_code=500, detail="Database Offline")
+    """
+    Fungsi untuk menghapus semua riwayat melalui Laravel Bridge.
+    Ini memastikan data di MySQL terhapus dan Dashboard Laravel ikut terupdate.
+    """
+    
+    # Gunakan domain publik Laravel Anda dari Railway
+    domain_laravel = "https://mysql-jsaj-production.up.railway.app" 
+    
+    # Endpoint ini harus didaftarkan di routes/web.php Laravel
+    laravel_url = f"https://mysql-jsaj-production.up.railway.app/api/history/delete-all-secure"
     
     try:
-        cursor = db.cursor()
+        # Mengirim permintaan HTTP DELETE ke Laravel
+        # Timeout 15 detik untuk mengantisipasi jaringan lambat
+        response = requests.delete(laravel_url, timeout=15)
         
-        # 1. Nonaktifkan pengecekan Foreign Key agar tidak gagal jika ada relasi
-        cursor.execute("SET FOREIGN_KEY_CHECKS = 0")
-        
-        # 2. Coba hapus ke tabel 'plowing_histories' (Jamak - Standar Laravel)
-        # Jika gagal, ia akan mencoba ke 'plowing_history' (Tunggal)
-        try:
-            cursor.execute("TRUNCATE TABLE plowing_histories")
-        except:
-            cursor.execute("TRUNCATE TABLE plowing_history")
+        # Cek jika Laravel berhasil memproses permintaan
+        if response.status_code == 200:
+            return {
+                "status": "success",
+                "message": "Semua riwayat berhasil dihapus (Sinkron dengan Laravel)",
+                "data_from_laravel": response.json()
+            }
+        else:
+            # Jika Laravel menolak (misal: Error 419 CSRF atau 404 Route Not Found)
+            raise HTTPException(
+                status_code=response.status_code, 
+                detail=f"Laravel menolak akses: {response.text}"
+            )
             
-        # 3. Aktifkan kembali pengecekan Foreign Key
-        cursor.execute("SET FOREIGN_KEY_CHECKS = 1")
-        
-        # 4. WAJIB: Simpan perubahan secara permanen
-        db.commit() 
-        
-        print("DEBUG: Berhasil menghapus semua riwayat")
-        
-        return {
-            "status": "success",
-            "message": "Semua riwayat pembajakan telah dikosongkan"
-        }
-        
-    except Exception as e:
-        if db:
-            db.rollback()
-        print(f"Error fatal saat menghapus: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Gagal Menghapus: {str(e)}")
-        
-    finally:
-        if cursor:
-            cursor.close()
-        if db:
-            db.close()
+    except requests.exceptions.RequestException as e:
+        # Jika server Laravel tidak bisa dihubungi
+        raise HTTPException(
+            status_code=500, 
+            detail=f"Gagal menghubungi server Laravel: {str(e)}"
+        )
 
 # 3. AMBIL SENSOR TERBARU (Fungsi Lama Tetap Sama dengan perbaikan jam WIB)
 @app.get("/api/soil-data/latest")

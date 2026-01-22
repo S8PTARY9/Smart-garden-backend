@@ -4,3 +4,4 @@ paho-mqtt
 pydantic
 mysql-connector-python
 python-dotenv
+requests==2.31.0
