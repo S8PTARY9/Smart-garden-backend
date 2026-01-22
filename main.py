@@ -152,24 +152,33 @@ async def delete_all_history():
         raise HTTPException(status_code=500, detail="Database Offline")
     
     try:
+        # Gunakan autocommit agar perintah langsung dieksekusi tanpa antre
+        db.autocommit = True
         cursor = db.cursor()
         
-        # TRIK: Gunakan WHERE id > 0 agar MySQL menganggap ini bukan hapus buta
-        # Ini akan melewati proteksi 'Safe Update Mode'
-        sql = "DELETE FROM plowing_history WHERE id > 0"
-        cursor.execute(sql)
+        # 1. Matikan proteksi (Sangat penting karena ada casting array/JSON di Laravel)
+        cursor.execute("SET FOREIGN_KEY_CHECKS = 0")
         
-        # WAJIB: Simpan permanen
-        db.commit()
+        # 2. Kosongkan tabel secara total
+        # TRUNCATE akan mereset ID kembali ke 1 dan membersihkan kolom JSON path_data
+        cursor.execute("TRUNCATE TABLE plowing_history")
+        
+        # 3. Hidupkan kembali proteksi
+        cursor.execute("SET FOREIGN_KEY_CHECKS = 1")
         
         return {
             "status": "success", 
-            "message": "Seluruh riwayat berhasil dihapus menggunakan filter ID"
+            "message": "Seluruh riwayat berhasil dibersihkan dan ID di-reset"
         }
     except Exception as e:
-        db.rollback()
-        print(f"Error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        print(f"Error fatal: {e}")
+        # Jika TRUNCATE gagal, gunakan DELETE sebagai cadangan (fallback)
+        try:
+            cursor.execute("DELETE FROM plowing_history WHERE id > 0")
+            db.commit()
+            return {"status": "success", "message": "Riwayat dihapus dengan metode DELETE"}
+        except:
+            raise HTTPException(status_code=500, detail=f"Gagal total: {str(e)}")
     finally:
         db.close()
 
