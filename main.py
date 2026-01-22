@@ -154,26 +154,31 @@ async def delete_all_history():
     try:
         cursor = db.cursor()
         
-        # 1. Matikan pengecekan relasi agar tidak diblokir database
+        # 1. Matikan mode safe updates agar MySQL mau menghapus banyak data sekaligus
+        cursor.execute("SET SQL_SAFE_UPDATES = 0")
+        
+        # 2. Matikan pengecekan Foreign Key (relasi)
         cursor.execute("SET FOREIGN_KEY_CHECKS = 0")
         
-        # 2. Jalankan perintah hapus semua
+        # 3. Jalankan penghapusan
         cursor.execute("DELETE FROM plowing_history")
         
-        # 3. Hidupkan kembali pengecekan relasi
-        cursor.execute("SET FOREIGN_KEY_CHECKS = 1")
+        # 4. WAJIB: Simpan permanen sekarang juga
+        db.commit()
         
-        # 4. WAJIB: Simpan perubahan secara permanen
+        # 5. Hidupkan kembali proteksi
+        cursor.execute("SET SQL_SAFE_UPDATES = 1")
+        cursor.execute("SET FOREIGN_KEY_CHECKS = 1")
         db.commit()
         
         return {
             "status": "success", 
-            "message": "Semua riwayat berhasil dikosongkan secara paksa"
+            "message": "Seluruh riwayat berhasil dibersihkan"
         }
     except Exception as e:
         db.rollback()
-        print(f"Error fatal hapus semua: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        print(f"Error fatal: {e}")
+        raise HTTPException(status_code=500, detail=f"Gagal total: {str(e)}")
     finally:
         db.close()
 
