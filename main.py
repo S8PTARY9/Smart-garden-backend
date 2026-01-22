@@ -145,39 +145,32 @@ async def delete_history(history_id: int):
         db.close()
 
 # 4. HAPUS SEMUA RIWAYAT
-from fastapi import FastAPI, HTTPException, Request
-
-# ... (kode koneksi db tetap sama)
-
 @app.delete("/api/plowing-history/all")
-async def delete_all_history(request: Request): # Menambahkan 'request' untuk menangkap data mentah jika ada
+async def delete_all_history():
     db = get_db_connection()
     if not db:
         raise HTTPException(status_code=500, detail="Database Offline")
     
     try:
+        db.autocommit = True
         cursor = db.cursor()
         
-        # Bypass proteksi agar bisa hapus massal
+        # 1. MATIKAN CEK RELASI (Bypass Laravel Migration Rules)
         cursor.execute("SET FOREIGN_KEY_CHECKS = 0")
-        cursor.execute("SET SQL_SAFE_UPDATES = 0")
         
-        # Eksekusi Hapus
-        cursor.execute("DELETE FROM plowing_history")
+        # 2. HAPUS DATA (Gunakan TRUNCATE untuk reset total seperti baru install)
+        # Truncate lebih kuat dari Delete karena dia mengabaikan row-lock
+        try:
+            cursor.execute("TRUNCATE TABLE plowing_history")
+        except:
+            cursor.execute("DELETE FROM plowing_history")
         
-        # Reset ID agar kembali dari 1
-        cursor.execute("ALTER TABLE plowing_history AUTO_INCREMENT = 1")
-        
-        db.commit()
-        
-        # Kembalikan proteksi
+        # 3. HIDUPKAN KEMBALI CEK RELASI
         cursor.execute("SET FOREIGN_KEY_CHECKS = 1")
         
-        return {"status": "success", "message": "Semua data berhasil dihapus"}
-        
+        return {"status": "success", "message": "Berhasil! Tabel dikosongkan kembali."}
     except Exception as e:
-        db.rollback()
-        print(f"Error detail: {str(e)}")
+        print(f"Error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
     finally:
         db.close()
