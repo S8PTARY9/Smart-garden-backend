@@ -154,7 +154,7 @@ async def delete_all_history():
     try:
         cursor = db.cursor()
         
-        # Hitung jumlah data yang akan dihapus
+        # 1. Hitung jumlah data yang akan dihapus (Opsional, untuk info saja)
         cursor.execute("SELECT COUNT(*) FROM plowing_history")
         count = cursor.fetchone()[0]
         
@@ -164,17 +164,25 @@ async def delete_all_history():
                 "message": "Tidak ada riwayat untuk dihapus"
             }
         
-        # Hapus semua data
+        # 2. Jalankan perintah DELETE
         cursor.execute("DELETE FROM plowing_history")
+        
+        # 3. WAJIB: Lakukan COMMIT agar perubahan tersimpan di Railway
+        db.commit() 
+        
+        print(f"Berhasil menghapus {count} data dari plowing_history")
         
         return {
             "status": "success",
             "message": f"Berhasil menghapus {count} riwayat pembajakan"
         }
     except Exception as e:
+        # Jika gagal, batalkan semua perubahan
+        db.rollback() 
         print(f"Error saat menghapus semua riwayat: {e}")
         raise HTTPException(status_code=500, detail=str(e))
     finally:
+        cursor.close()
         db.close()
 
 # 3. AMBIL SENSOR TERBARU (Fungsi Lama Tetap Sama dengan perbaikan jam WIB)
