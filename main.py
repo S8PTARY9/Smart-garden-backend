@@ -146,48 +146,26 @@ async def delete_history(history_id: int):
 
 # 4. HAPUS SEMUA RIWAYAT (Versi Super Kuat)
 import requests
-from fastapi import FastAPI, HTTPException
-
-app = FastAPI()
+from fastapi import HTTPException
 
 @app.delete("/api/plowing-history/all")
 async def delete_all_history():
-    """
-    Fungsi untuk menghapus semua riwayat melalui Laravel Bridge.
-    Ini memastikan data di MySQL terhapus dan Dashboard Laravel ikut terupdate.
-    """
-    
-    # Gunakan domain publik Laravel Anda dari Railway
-    domain_laravel = "https://mysql-jsaj-production.up.railway.app" 
-    
-    # Endpoint ini harus didaftarkan di routes/web.php Laravel
-    laravel_url = f"https://mysql-jsaj-production.up.railway.app/api/history/delete-all-secure"
+    url = "https://mysql-jsaj-production.up.railway.app/api/history/delete-all-secure"
     
     try:
-        # Mengirim permintaan HTTP DELETE ke Laravel
-        # Timeout 15 detik untuk mengantisipasi jaringan lambat
-        response = requests.delete(laravel_url, timeout=15)
+        # Gunakan timeout pendek (5 detik) agar tidak menggantung (hang)
+        response = requests.delete(url, timeout=5)
         
-        # Cek jika Laravel berhasil memproses permintaan
         if response.status_code == 200:
-            return {
-                "status": "success",
-                "message": "Semua riwayat berhasil dihapus (Sinkron dengan Laravel)",
-                "data_from_laravel": response.json()
-            }
+            return {"status": "success", "message": "Riwayat berhasil dihapus"}
         else:
-            # Jika Laravel menolak (misal: Error 419 CSRF atau 404 Route Not Found)
-            raise HTTPException(
-                status_code=response.status_code, 
-                detail=f"Laravel menolak akses: {response.text}"
-            )
+            # Jika error, kirim pesan balik ke App tanpa merusak sistem
+            return {"status": "error", "message": f"Backend sibuk (Code: {response.status_code})"}
             
-    except requests.exceptions.RequestException as e:
-        # Jika server Laravel tidak bisa dihubungi
-        raise HTTPException(
-            status_code=500, 
-            detail=f"Gagal menghubungi server Laravel: {str(e)}"
-        )
+    except Exception as e:
+        # Jika koneksi putus, jangan biarkan aplikasi crash/refresh terus
+        print(f"Koneksi putus: {e}")
+        return {"status": "error", "message": "Server sedang tidak stabil"}
 
 # 3. AMBIL SENSOR TERBARU (Fungsi Lama Tetap Sama dengan perbaikan jam WIB)
 @app.get("/api/soil-data/latest")
