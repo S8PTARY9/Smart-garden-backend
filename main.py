@@ -152,38 +152,45 @@ async def delete_all_history():
         raise HTTPException(status_code=500, detail="Database Offline")
     
     try:
+        # Gunakan autocommit jika library mendukung, atau lakukan manual
         cursor = db.cursor()
         
-        # 1. Hitung jumlah data yang akan dihapus (Opsional, untuk info saja)
-        cursor.execute("SELECT COUNT(*) FROM plowing_history")
-        count = cursor.fetchone()[0]
+        # 1. Nonaktifkan pengecekan kunci (untuk menghindari kegagalan jika ada relasi)
+        cursor.execute("SET FOREIGN_KEY_CHECKS = 0")
         
-        if count == 0:
-            return {
-                "status": "success",
-                "message": "Tidak ada riwayat untuk dihapus"
-            }
-        
-        # 2. Jalankan perintah DELETE
+        # 2. Jalankan penghapusan
+        # Pastikan nama tabel persis: plowing_history
         cursor.execute("DELETE FROM plowing_history")
         
-        # 3. WAJIB: Lakukan COMMIT agar perubahan tersimpan di Railway
+        # 3. SANGAT PENTING: Commit perubahan ke database Railway
         db.commit() 
         
-        print(f"Berhasil menghapus {count} data dari plowing_history")
+        # 4. Aktifkan kembali pengecekan kunci
+        cursor.execute("SET FOREIGN_KEY_CHECKS = 1")
+        
+        # Ambil jumlah baris yang terpengaruh
+        affected = cursor.rowcount
+        
+        print(f"DEBUG: Berhasil menghapus {affected} baris dari plowing_history")
         
         return {
             "status": "success",
-            "message": f"Berhasil menghapus {count} riwayat pembajakan"
+            "message": f"Berhasil menghapus {affected} riwayat pembajakan",
+            "rows_affected": affected
         }
+        
     except Exception as e:
-        # Jika gagal, batalkan semua perubahan
-        db.rollback() 
-        print(f"Error saat menghapus semua riwayat: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        # Jika terjadi error, batalkan transaksi
+        if db:
+            db.rollback()
+        print(f"Error saat menghapus: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Gagal: {str(e)}")
+        
     finally:
-        cursor.close()
-        db.close()
+        if cursor:
+            cursor.close()
+        if db:
+            db.close()
 
 # 3. AMBIL SENSOR TERBARU (Fungsi Lama Tetap Sama dengan perbaikan jam WIB)
 @app.get("/api/soil-data/latest")
