@@ -145,27 +145,45 @@ async def delete_history(history_id: int):
         db.close()
 
 # 4. HAPUS SEMUA RIWAYAT (Versi Super Kuat)
-import requests
-from fastapi import HTTPException
+import mysql.connector
+from fastapi import FastAPI, HTTPException
+
+app = FastAPI()
+
+# Konfigurasi Database (Gunakan data External dari Railway)
+db_config = {
+    'host': 'interchange.proxy.rlwy.net',
+    'user': 'root',
+    'password': 'mSpnDMFhuXXGyEKhQbtExsQujUlDYiff',
+    'database': 'railway',
+    'port': 59498
+}
 
 @app.delete("/api/plowing-history/all")
 async def delete_all_history():
-    url = "https://mysql-jsaj-production.up.railway.app/api/history/delete-all-secure"
-    
+    conn = None
     try:
-        # Gunakan timeout pendek (5 detik) agar tidak menggantung (hang)
-        response = requests.delete(url, timeout=5)
+        # Membuka koneksi langsung ke MySQL
+        conn = mysql.connector.connect(**db_config)
+        cursor = conn.cursor()
+
+        # Menghapus data riwayat (ID akan di-reset ke 1 dengan TRUNCATE)
+        cursor.execute("TRUNCATE TABLE plowing_history")
         
-        if response.status_code == 200:
-            return {"status": "success", "message": "Riwayat berhasil dihapus"}
-        else:
-            # Jika error, kirim pesan balik ke App tanpa merusak sistem
-            return {"status": "error", "message": f"Backend sibuk (Code: {response.status_code})"}
-            
-    except Exception as e:
-        # Jika koneksi putus, jangan biarkan aplikasi crash/refresh terus
-        print(f"Koneksi putus: {e}")
-        return {"status": "error", "message": "Server sedang tidak stabil"}
+        conn.commit()
+        return {"status": "success", "message": "Riwayat berhasil dikosongkan secara langsung!"}
+
+    except mysql.connector.Error as err:
+        return {"status": "error", "message": f"Koneksi Database Gagal: {err}"}
+    
+    finally:
+        if conn and conn.is_connected():
+            cursor.close()
+            conn.close()
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
 
 # 3. AMBIL SENSOR TERBARU (Fungsi Lama Tetap Sama dengan perbaikan jam WIB)
 @app.get("/api/soil-data/latest")
