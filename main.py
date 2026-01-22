@@ -145,32 +145,39 @@ async def delete_history(history_id: int):
         db.close()
 
 # 4. HAPUS SEMUA RIWAYAT
+from fastapi import FastAPI, HTTPException, Request
+
+# ... (kode koneksi db tetap sama)
+
 @app.delete("/api/plowing-history/all")
-async def delete_all_history():
-    # JANGAN masukkan parameter apapun di dalam kurung fungsi ini
+async def delete_all_history(request: Request): # Menambahkan 'request' untuk menangkap data mentah jika ada
     db = get_db_connection()
     if not db:
         raise HTTPException(status_code=500, detail="Database Offline")
     
     try:
-        db.autocommit = True
         cursor = db.cursor()
         
-        # Bypass proteksi Laravel
+        # Bypass proteksi agar bisa hapus massal
         cursor.execute("SET FOREIGN_KEY_CHECKS = 0")
         cursor.execute("SET SQL_SAFE_UPDATES = 0")
         
-        # Eksekusi hapus total
+        # Eksekusi Hapus
         cursor.execute("DELETE FROM plowing_history")
         
-        # Reset ID ke 1
+        # Reset ID agar kembali dari 1
         cursor.execute("ALTER TABLE plowing_history AUTO_INCREMENT = 1")
         
+        db.commit()
+        
+        # Kembalikan proteksi
         cursor.execute("SET FOREIGN_KEY_CHECKS = 1")
         
-        return {"status": "success", "message": "Data dibersihkan total"}
+        return {"status": "success", "message": "Semua data berhasil dihapus"}
+        
     except Exception as e:
-        print(f"Error: {str(e)}")
+        db.rollback()
+        print(f"Error detail: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
     finally:
         db.close()
