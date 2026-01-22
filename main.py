@@ -154,24 +154,25 @@ async def delete_all_history():
     try:
         cursor = db.cursor()
         
-        # Menggunakan DELETE tanpa WHERE untuk menghapus semua baris
-        # Ini lebih aman daripada TRUNCATE jika ada relasi database
+        # 1. Matikan pengecekan relasi agar tidak diblokir database
+        cursor.execute("SET FOREIGN_KEY_CHECKS = 0")
+        
+        # 2. Jalankan perintah hapus semua
         cursor.execute("DELETE FROM plowing_history")
         
-        # PENTING: Anda WAJIB menambahkan commit agar perubahan disimpan
-        db.commit()
+        # 3. Hidupkan kembali pengecekan relasi
+        cursor.execute("SET FOREIGN_KEY_CHECKS = 1")
         
-        # Mendapatkan jumlah data yang terhapus
-        rows_deleted = cursor.rowcount
+        # 4. WAJIB: Simpan perubahan secara permanen
+        db.commit()
         
         return {
             "status": "success", 
-            "message": f"Semua riwayat ({rows_deleted} baris) berhasil dihapus"
+            "message": "Semua riwayat berhasil dikosongkan secara paksa"
         }
     except Exception as e:
-        # Jika gagal, batalkan perubahan
         db.rollback()
-        print(f"Error saat menghapus semua riwayat: {e}")
+        print(f"Error fatal hapus semua: {e}")
         raise HTTPException(status_code=500, detail=str(e))
     finally:
         db.close()
