@@ -152,25 +152,27 @@ async def delete_all_history():
         raise HTTPException(status_code=500, detail="Database Offline")
     
     try:
-        db.autocommit = True
         cursor = db.cursor()
         
-        # 1. MATIKAN CEK RELASI (Bypass Laravel Migration Rules)
-        cursor.execute("SET FOREIGN_KEY_CHECKS = 0")
+        # Hitung jumlah data yang akan dihapus
+        cursor.execute("SELECT COUNT(*) FROM plowing_history")
+        count = cursor.fetchone()[0]
         
-        # 2. HAPUS DATA (Gunakan TRUNCATE untuk reset total seperti baru install)
-        # Truncate lebih kuat dari Delete karena dia mengabaikan row-lock
-        try:
-            cursor.execute("TRUNCATE TABLE plowing_history")
-        except:
-            cursor.execute("DELETE FROM plowing_history")
+        if count == 0:
+            return {
+                "status": "success",
+                "message": "Tidak ada riwayat untuk dihapus"
+            }
         
-        # 3. HIDUPKAN KEMBALI CEK RELASI
-        cursor.execute("SET FOREIGN_KEY_CHECKS = 1")
+        # Hapus semua data
+        cursor.execute("DELETE FROM plowing_history")
         
-        return {"status": "success", "message": "Berhasil! Tabel dikosongkan kembali."}
+        return {
+            "status": "success",
+            "message": f"Berhasil menghapus {count} riwayat pembajakan"
+        }
     except Exception as e:
-        print(f"Error: {e}")
+        print(f"Error saat menghapus semua riwayat: {e}")
         raise HTTPException(status_code=500, detail=str(e))
     finally:
         db.close()
