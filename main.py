@@ -144,7 +144,7 @@ async def delete_history(history_id: int):
     finally:
         db.close()
 
-# 4. HAPUS SEMUA RIWAYAT
+# 4. HAPUS SEMUA RIWAYAT (Versi Super Kuat)
 @app.delete("/api/plowing-history/all")
 async def delete_all_history():
     db = get_db_connection()
@@ -152,39 +152,36 @@ async def delete_all_history():
         raise HTTPException(status_code=500, detail="Database Offline")
     
     try:
-        # Gunakan autocommit jika library mendukung, atau lakukan manual
         cursor = db.cursor()
         
-        # 1. Nonaktifkan pengecekan kunci (untuk menghindari kegagalan jika ada relasi)
+        # 1. Nonaktifkan pengecekan Foreign Key agar tidak gagal jika ada relasi
         cursor.execute("SET FOREIGN_KEY_CHECKS = 0")
         
-        # 2. Jalankan penghapusan
-        # Pastikan nama tabel persis: plowing_history
-        cursor.execute("DELETE FROM plowing_history")
-        
-        # 3. SANGAT PENTING: Commit perubahan ke database Railway
-        db.commit() 
-        
-        # 4. Aktifkan kembali pengecekan kunci
+        # 2. Coba hapus ke tabel 'plowing_histories' (Jamak - Standar Laravel)
+        # Jika gagal, ia akan mencoba ke 'plowing_history' (Tunggal)
+        try:
+            cursor.execute("TRUNCATE TABLE plowing_histories")
+        except:
+            cursor.execute("TRUNCATE TABLE plowing_history")
+            
+        # 3. Aktifkan kembali pengecekan Foreign Key
         cursor.execute("SET FOREIGN_KEY_CHECKS = 1")
         
-        # Ambil jumlah baris yang terpengaruh
-        affected = cursor.rowcount
+        # 4. WAJIB: Simpan perubahan secara permanen
+        db.commit() 
         
-        print(f"DEBUG: Berhasil menghapus {affected} baris dari plowing_history")
+        print("DEBUG: Berhasil menghapus semua riwayat")
         
         return {
             "status": "success",
-            "message": f"Berhasil menghapus {affected} riwayat pembajakan",
-            "rows_affected": affected
+            "message": "Semua riwayat pembajakan telah dikosongkan"
         }
         
     except Exception as e:
-        # Jika terjadi error, batalkan transaksi
         if db:
             db.rollback()
-        print(f"Error saat menghapus: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Gagal: {str(e)}")
+        print(f"Error fatal saat menghapus: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Gagal Menghapus: {str(e)}")
         
     finally:
         if cursor:
