@@ -147,10 +147,19 @@ async def delete_history(history_id: int):
 # 4. HAPUS SEMUA RIWAYAT (Versi Super Kuat)
 import mysql.connector
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI()
 
-# Konfigurasi Database (Gunakan data External dari Railway)
+# Tambahkan CORS agar aplikasi web/mobile tidak memblokir request
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Konfigurasi Database (Gunakan External Connection dari Railway)
 db_config = {
     'host': 'interchange.proxy.rlwy.net',
     'user': 'root',
@@ -163,27 +172,24 @@ db_config = {
 async def delete_all_history():
     conn = None
     try:
-        # Membuka koneksi langsung ke MySQL
+        # Menghubungkan langsung ke MySQL
         conn = mysql.connector.connect(**db_config)
         cursor = conn.cursor()
 
-        # Menghapus data riwayat (ID akan di-reset ke 1 dengan TRUNCATE)
+        # Gunakan TRUNCATE agar data benar-benar bersih dan ID kembali ke 1
         cursor.execute("TRUNCATE TABLE plowing_history")
         
         conn.commit()
-        return {"status": "success", "message": "Riwayat berhasil dikosongkan secara langsung!"}
+        return {"status": "success", "message": "Riwayat berhasil dikosongkan!"}
 
     except mysql.connector.Error as err:
-        return {"status": "error", "message": f"Koneksi Database Gagal: {err}"}
+        # Jika error, kirim detail error agar tidak terjadi looping refresh
+        return {"status": "error", "message": f"Database Error: {err.msg}"}
     
     finally:
         if conn and conn.is_connected():
             cursor.close()
             conn.close()
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
 
 # 3. AMBIL SENSOR TERBARU (Fungsi Lama Tetap Sama dengan perbaikan jam WIB)
 @app.get("/api/soil-data/latest")
