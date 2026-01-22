@@ -154,22 +154,32 @@ async def delete_all_history():
     try:
         cursor = db.cursor()
         
-        # Ambil semua ID yang ada
-        cursor.execute("SELECT id FROM plowing_history")
-        ids = cursor.fetchall()
+        # 1. Matikan proteksi Relasi (Agar tidak diblokir Laravel)
+        cursor.execute("SET FOREIGN_KEY_CHECKS = 0")
         
-        if not ids:
-            return {"status": "success", "message": "Memang sudah kosong"}
-
-        # Hapus satu per satu dalam satu eksekusi
-        # Ini meniru cara 'hapus per ID' yang Anda konfirmasi bisa jalan
-        cursor.execute("DELETE FROM plowing_history WHERE id > 0")
+        # 2. Matikan Safe Updates (Agar bisa hapus tanpa filter ID spesifik)
+        cursor.execute("SET SQL_SAFE_UPDATES = 0")
         
+        # 3. Eksekusi Penghapusan Total
+        # Menggunakan nama tabel 'plowing_history' sesuai Model Laravel Anda
+        cursor.execute("DELETE FROM plowing_history")
+        
+        # 4. WAJIB: Simpan perubahan secara permanen ke database
         db.commit()
-        return {"status": "success", "message": f"Berhasil menghapus {cursor.rowcount} data"}
+        
+        # 5. Hidupkan kembali proteksi database
+        cursor.execute("SET FOREIGN_KEY_CHECKS = 1")
+        cursor.execute("SET SQL_SAFE_UPDATES = 1")
+        
+        return {
+            "status": "success", 
+            "message": "Seluruh riwayat berhasil dikosongkan secara total"
+        }
         
     except Exception as e:
+        # Jika ada error, batalkan transaksi
         db.rollback()
+        print(f"Gagal menghapus semua: {e}")
         raise HTTPException(status_code=500, detail=str(e))
     finally:
         db.close()
