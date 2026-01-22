@@ -144,7 +144,7 @@ async def delete_history(history_id: int):
     finally:
         db.close()
 
-# 4. HAPUS SEMUA RIWAYAT (Versi Super Kuat)
+# 4. HAPUS SEMUA RIWAYAT
 @app.delete("/api/plowing-history/all")
 async def delete_all_history():
     db = get_db_connection()
@@ -152,33 +152,25 @@ async def delete_all_history():
         raise HTTPException(status_code=500, detail="Database Offline")
     
     try:
-        # Gunakan autocommit agar perintah langsung dieksekusi tanpa antre
-        db.autocommit = True
         cursor = db.cursor()
         
-        # 1. Matikan proteksi (Sangat penting karena ada casting array/JSON di Laravel)
-        cursor.execute("SET FOREIGN_KEY_CHECKS = 0")
+        # Ambil semua ID yang ada
+        cursor.execute("SELECT id FROM plowing_history")
+        ids = cursor.fetchall()
         
-        # 2. Kosongkan tabel secara total
-        # TRUNCATE akan mereset ID kembali ke 1 dan membersihkan kolom JSON path_data
-        cursor.execute("TRUNCATE TABLE plowing_history")
+        if not ids:
+            return {"status": "success", "message": "Memang sudah kosong"}
+
+        # Hapus satu per satu dalam satu eksekusi
+        # Ini meniru cara 'hapus per ID' yang Anda konfirmasi bisa jalan
+        cursor.execute("DELETE FROM plowing_history WHERE id > 0")
         
-        # 3. Hidupkan kembali proteksi
-        cursor.execute("SET FOREIGN_KEY_CHECKS = 1")
+        db.commit()
+        return {"status": "success", "message": f"Berhasil menghapus {cursor.rowcount} data"}
         
-        return {
-            "status": "success", 
-            "message": "Seluruh riwayat berhasil dibersihkan dan ID di-reset"
-        }
     except Exception as e:
-        print(f"Error fatal: {e}")
-        # Jika TRUNCATE gagal, gunakan DELETE sebagai cadangan (fallback)
-        try:
-            cursor.execute("DELETE FROM plowing_history WHERE id > 0")
-            db.commit()
-            return {"status": "success", "message": "Riwayat dihapus dengan metode DELETE"}
-        except:
-            raise HTTPException(status_code=500, detail=f"Gagal total: {str(e)}")
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
     finally:
         db.close()
 
