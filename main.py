@@ -145,51 +145,36 @@ async def delete_history(history_id: int):
         db.close()
 
 # 4. HAPUS SEMUA RIWAYAT (Versi Super Kuat)
-import mysql.connector
-from fastapi import FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-
-app = FastAPI()
-
-# Tambahkan CORS agar aplikasi web/mobile tidak memblokir request
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# Konfigurasi Database (Gunakan External Connection dari Railway)
-db_config = {
-    'host': 'interchange.proxy.rlwy.net',
-    'user': 'root',
-    'password': 'mSpnDMFhuXXGyEKhQbtExsQujUlDYiff',
-    'database': 'railway',
-    'port': 59498
-}
-
 @app.delete("/api/plowing-history/all")
 async def delete_all_history():
-    conn = None
-    try:
-        # Menghubungkan langsung ke MySQL
-        conn = mysql.connector.connect(**db_config)
-        cursor = conn.cursor()
-
-        # Gunakan TRUNCATE agar data benar-benar bersih dan ID kembali ke 1
-        cursor.execute("TRUNCATE TABLE plowing_history")
-        
-        conn.commit()
-        return {"status": "success", "message": "Riwayat berhasil dikosongkan!"}
-
-    except mysql.connector.Error as err:
-        # Jika error, kirim detail error agar tidak terjadi looping refresh
-        return {"status": "error", "message": f"Database Error: {err.msg}"}
+    db = get_db_connection()
+    if not db:
+        raise HTTPException(status_code=500, detail="Database Offline")
     
+    try:
+        cursor = db.cursor()
+        
+        # Menggunakan DELETE tanpa WHERE untuk menghapus semua baris
+        # Ini lebih aman daripada TRUNCATE jika ada relasi database
+        cursor.execute("DELETE FROM plowing_history")
+        
+        # PENTING: Anda WAJIB menambahkan commit agar perubahan disimpan
+        db.commit()
+        
+        # Mendapatkan jumlah data yang terhapus
+        rows_deleted = cursor.rowcount
+        
+        return {
+            "status": "success", 
+            "message": f"Semua riwayat ({rows_deleted} baris) berhasil dihapus"
+        }
+    except Exception as e:
+        # Jika gagal, batalkan perubahan
+        db.rollback()
+        print(f"Error saat menghapus semua riwayat: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
     finally:
-        if conn and conn.is_connected():
-            cursor.close()
-            conn.close()
+        db.close()
 
 # 3. AMBIL SENSOR TERBARU (Fungsi Lama Tetap Sama dengan perbaikan jam WIB)
 @app.get("/api/soil-data/latest")
